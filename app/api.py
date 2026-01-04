@@ -1,6 +1,6 @@
 from starlette.responses import JSONResponse
 from langchain_core.messages.ai import AIMessage
-from app.agent import agent
+from app.agent import agent, Context
 from fastapi import FastAPI
 from pydantic import BaseModel
 
@@ -17,7 +17,8 @@ class UserRequest(BaseModel):
 async def chat(user_request: UserRequest) -> str:
     try:
         response = agent.invoke(
-            {"messages": [{"role": "user", "content": user_request.input}]}
+            {"messages": [{"role": "user", "content": user_request.input}]},
+            context=Context(doc_content_hash=user_request.doc_content_hash),
         )
         print(response)
         print([msg.pretty_print() for msg in response["messages"]])
