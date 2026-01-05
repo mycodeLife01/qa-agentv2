@@ -15,14 +15,15 @@ from llama_index.core.vector_stores import (
     MetadataFilter,
     MetadataFilters,
 )
+from llama_index.postprocessor.cohere_rerank import CohereRerank
 
 
 load_dotenv()
 
-model = ChatGoogleGenerativeAI(
+_model = ChatGoogleGenerativeAI(
     model=os.getenv("AGENT_MODEL"), temperature=1.0, thinking_level="minimal"
 )
-llama_llm = GoogleGenAI(model=os.getenv("AGENT_MODEL"))
+_llama_llm = GoogleGenAI(model=os.getenv("AGENT_MODEL"))
 
 SYSTEM_PROMPT = """
 You are a helpful assistant with a essential tool called 'search_vdb', You MUST stick to the following rules:
@@ -32,7 +33,8 @@ You are a helpful assistant with a essential tool called 'search_vdb', You MUST 
 """
 
 
-def init_vector_database():
+# init chromadb during module initialization, app would be terminated if any error occurred
+def _init_vector_database():
     chroma_client = chromadb.HttpClient(
         host=os.getenv("CHROMA_HOST"), port=os.getenv("CHROMA_PORT")
     )
@@ -42,7 +44,10 @@ def init_vector_database():
     return ChromaVectorStore(chroma_collection=collection)
 
 
-vector_store = init_vector_database()
+_vector_store = _init_vector_database()
+
+_index = None
+_response_synthesizer = None
 
 
 @tool
@@ -53,14 +58,23 @@ def search_vdb(query: str, runtime: ToolRuntime) -> str:
     Returns:
         str: The relevant context
     """
+    global _index, _response_synthesizer
+
     try:
-        index = VectorStoreIndex.from_vector_store(
-            vector_store=vector_store,
-            embed_model=GoogleGenAIEmbedding(
-                model_name=os.getenv("EMBEDDING_MODEL"),
-                embed_batch_size=100,
-            ),
-        )
+        # Lazy initialization: cache index and response_synthesizer
+        if _index is None:
+            _index = VectorStoreIndex.from_vector_store(
+                vector_store=_vector_store,
+                embed_model=GoogleGenAIEmbedding(
+                    model_name=os.getenv("EMBEDDING_MODEL"),
+                    embed_batch_size=100,
+                ),
+            )
+
+        if _response_synthesizer is None:
+            _response_synthesizer = get_response_synthesizer(llm=_llama_llm)
+
+        # Dynamic filters (cannot be cached)
         filters = MetadataFilters(
             filters=[
                 MetadataFilter(
@@ -69,13 +83,22 @@ def search_vdb(query: str, runtime: ToolRuntime) -> str:
                 )
             ]
         )
+
+        # Two-stage retrieval: fetch more candidates, then rerank
         retriever = VectorIndexRetriever(
-            index=index, similarity_top_k=4, filters=filters
+            index=_index, similarity_top_k=10, filters=filters
         )
-        response_synthesizer = get_response_synthesizer(llm=llama_llm)
+
+        reranker = CohereRerank(
+            api_key=os.getenv("COHERE_API_KEY"), top_n=4, model="rerank-v4.0-fast"
+        )
+
         query_engine = RetrieverQueryEngine(
-            retriever=retriever, response_synthesizer=response_synthesizer
+            retriever=retriever,
+            response_synthesizer=_response_synthesizer,
+            node_postprocessors=[reranker],
         )
+
         response = query_engine.query(query)
         return str(response)
     except Exception as e:
@@ -89,7 +112,7 @@ class Context:
 
 
 agent = create_agent(
-    model=model,
+    model=_model,
     tools=[search_vdb],
     system_prompt=SYSTEM_PROMPT,
     context_schema=Context,
