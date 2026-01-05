@@ -1,3 +1,4 @@
+import atexit
 import chromadb
 from langchain.agents import create_agent
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -16,18 +17,31 @@ from llama_index.core.vector_stores import (
     MetadataFilters,
 )
 from llama_index.postprocessor.cohere_rerank import CohereRerank
-
+from langgraph.checkpoint.postgres import PostgresSaver
 
 load_dotenv()
+
+# Close db connection when app is terminated
+atexit.register(lambda: _checkpointer_context.__exit__(None, None, None))
 
 _model = ChatGoogleGenerativeAI(
     model=os.getenv("AGENT_MODEL"), temperature=1.0, thinking_level="minimal"
 )
 _llama_llm = GoogleGenAI(model=os.getenv("AGENT_MODEL"))
 
+# Connect to postgres and setup checkpointer
+_checkpointer_context = PostgresSaver.from_conn_string(
+    os.getenv("AGENT_PERSIS_POSTGRES_URL")
+)
+_checkpointer = _checkpointer_context.__enter__()
+_checkpointer.setup()
+
+
 SYSTEM_PROMPT = """
 You are a helpful assistant with a essential tool called 'search_vdb', You MUST stick to the following rules:
-1. ALWAYS use the tool 'search_vdb' to get relevant context before responding to any user query.
+1. 'search_vdb' is a useful tool for retreiving relevant context for user query, conform to the route below to decide whether to use it:
+    1.1 user are asking for something beyond your knowledge base or you need external knowledge for second confirm: use the tool
+    1.2 otherwise: not use the tool
 2. ALWAYS put the **original user query** as the argument into the tool.
 3. DO NOT make up any context if receiving any error message from the tool and clarify it to the user.
 """
@@ -116,4 +130,5 @@ agent = create_agent(
     tools=[search_vdb],
     system_prompt=SYSTEM_PROMPT,
     context_schema=Context,
+    checkpointer=_checkpointer,
 )

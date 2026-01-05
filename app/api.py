@@ -1,3 +1,4 @@
+import uuid
 import asyncio
 from starlette.responses import JSONResponse, StreamingResponse
 from app.agent import agent, Context
@@ -44,6 +45,7 @@ async def chat(user_request: UserRequest):
                 {
                     "messages": [{"role": "user", "content": user_request.input}],
                 },
+                {"configurable": {"thread_id": "2"}},
                 context=Context(doc_content_hash=user_request.doc_content_hash),
                 stream_mode="messages",
             )
