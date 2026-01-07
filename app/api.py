@@ -35,17 +35,26 @@ def invoke_agent(agent, user_request):
 class UserRequest(BaseModel):
     input: str
     doc_content_hash: str
+    thread_id: str
+
+
+class AskResponse(BaseModel):
+    answer: str
 
 
 @app.post("/chat")
 async def chat(user_request: UserRequest):
+    print(
+        f"user request, hash: {user_request.doc_content_hash}, thread_id: {user_request.thread_id}, input: {user_request.input}"
+    )
+
     async def event_generator():
         try:
             response = agent.stream(
                 {
                     "messages": [{"role": "user", "content": user_request.input}],
                 },
-                {"configurable": {"thread_id": "2"}},
+                {"configurable": {"thread_id": user_request.thread_id}},
                 context=Context(doc_content_hash=user_request.doc_content_hash),
                 stream_mode="messages",
             )

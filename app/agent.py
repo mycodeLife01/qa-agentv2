@@ -88,6 +88,7 @@ def search_vdb(query: str, runtime: ToolRuntime) -> str:
         if _response_synthesizer is None:
             _response_synthesizer = get_response_synthesizer(llm=_llama_llm)
 
+        print(f"Tool runtime doc hash: {runtime.context.doc_content_hash}")
         # Dynamic filters (cannot be cached)
         filters = MetadataFilters(
             filters=[
@@ -104,7 +105,9 @@ def search_vdb(query: str, runtime: ToolRuntime) -> str:
         )
 
         reranker = CohereRerank(
-            api_key=os.getenv("COHERE_API_KEY"), top_n=4, model="rerank-v4.0-fast"
+            api_key=os.getenv("COHERE_API_KEY"),
+            top_n=4,
+            model=os.getenv("RERANK_MODEL"),
         )
 
         query_engine = RetrieverQueryEngine(
@@ -114,6 +117,7 @@ def search_vdb(query: str, runtime: ToolRuntime) -> str:
         )
 
         response = query_engine.query(query)
+        print(f"Tool response: {response}")
         return str(response)
     except Exception as e:
         print(f"[ERROR]: search_vdb, {e}")
